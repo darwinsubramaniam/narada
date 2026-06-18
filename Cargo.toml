@@ -12,7 +12,7 @@ members = [
 exclude = ["POC"]
 
 [workspace.dependencies]
-dioxus = { version = "0.7.1" }
+dioxus = { version = "0.7.9" }
 
 # workspace
 ui = { path = "packages/ui" }
