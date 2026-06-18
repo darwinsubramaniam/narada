@@ -16,6 +16,9 @@ and Bulletin's `store` content-addresses by the *same* Blake2b-256 hash. So the
 executor rebuilds the storage CID directly from the on-chain call hash — no separate
 mapping, and retrieval is self-verifying.
 
+> 📐 **[ARCHITECTURE.md](./ARCHITECTURE.md)** — full research write-up: problem
+> statement, data model, mermaid diagrams, and the live experiment results.
+
 ## What it does
 
 | Subcommand | As | Action |
@@ -30,6 +33,44 @@ mapping, and retrieval is self-verifying.
 reading on-chain `Multisig.Multisigs`, and fetches the **call bytes** solely from the
 Bulletin Chain. The only shared knowledge is the multisig membership (public config).
 That is the whole point.
+
+## Trust model & decodeability
+
+Person B (the approver) can **always fully decode the call they're about to sign**, with
+no centralized orchestration:
+
+- **Fully decodeable, no blind-signing.** The bytes B fetches from Bulletin are the
+  canonical SCALE encoding of the outer `RuntimeCall`. With the chain's type registry
+  (its metadata), `DecodeAsType` reconstructs the *entire* call tree — nested
+  `batch_all`, the inner transfer, the remark, everything (`pending` prints it). B then
+  submits `as_multi` with that **decoded call**, not an opaque hash. And a call that
+  *can't* be decoded also *can't* be executed (the pallet only runs a call whose bytes
+  hash to the on-chain key), so "if it doesn't decode, don't sign" never blocks a
+  legitimate payment.
+- **Non-custodial.** There is **no central database** (the Polkasafe/Mimir model). The
+  call data lives on a public chain, content-addressed, and is verified locally by
+  `blake2_256(fetched) == on-chain call hash`. No party can withhold, alter, or forge it
+  without breaking that check.
+- **The hosted gateway is a convenience, not a dependency.** This POC fetches over the
+  Parity-hosted HTTP gateway (`paseo-bulletin-next-ipfs.polkadot.io`) for simplicity,
+  but the data is **peer-to-peer retrievable** — the Bulletin Chain serves it over IPFS
+  Bitswap, and the official console prefers `p2p` for most networks. To remove the last
+  central touchpoint, B fetches from their own Bulletin/IPFS node (or a light client)
+  instead of the gateway; the bytes and the hash check are identical either way.
+
+**Caveats on "always":**
+
+- **Retention.** Bulletin keeps data ~14 days (`RetentionPeriod` = 201,600 blocks). A
+  multisig left pending longer needs the storage **renewed** (`renew` /
+  `enable_auto_renew`) or the bytes can be pruned — relevant for long-lived,
+  governance-style queues.
+- **Metadata version.** Decoding uses the chain's metadata; across a runtime upgrade a
+  long-pending call should be decoded with version-matched metadata. This is a
+  light-client/archive concern, not centralization — the metadata is part of the
+  runtime, served by the chain itself.
+- **Trustless reads.** Reading the call hash (Asset Hub) and the call data (Bulletin) can
+  both go through a **light client** (smoldot) instead of a hosted RPC, so B need not
+  trust any single provider.
 
 ## Prerequisites
 
@@ -115,4 +156,7 @@ subxt metadata --url wss://paseo-bulletin-next-rpc.polkadot.io --pallets Transac
 - `execute` auto-discovers all pending ops by iterating `Multisig.Multisigs`; pass
   `--call-hash 0x…` to target a specific one.
 - `max_weight` for `as_multi` is a generous constant (refunded down to actual).
+- Retrieval uses the hosted IPFS gateway for convenience; peer-to-peer / own-node fetch
+  (removing the last central touchpoint) is future hardening — see *Trust model*.
+- Long-pending ops aren't renewed, so they're bound by Bulletin's ~14-day retention.
 - Throwaway POC — not the production narada app.
