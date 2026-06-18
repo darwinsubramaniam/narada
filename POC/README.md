@@ -22,7 +22,7 @@ mapping, and retrieval is self-verifying.
 |---|---|---|
 | `address` | — | Print the derived 2-of-2 multisig account + funding/auth reminders. |
 | `fund-multisig` | — | Send PAS from both signatories to the multisig account (so the demo transfer has funds). |
-| `init` | signatory A | Encode a `transfer_keep_alive` call (`--recipient`/`--amount` make it distinct) → `transactionStorage.store` on Bulletin → `approve_as_multi(call_hash)` on Asset Hub. Refuses to double-queue an identical call. |
+| `init` | signatory A | Encode a `transfer_keep_alive` call (`--recipient`/`--amount`/`--memo` make it distinct) → `transactionStorage.store` on Bulletin → `approve_as_multi(call_hash)` on Asset Hub. With `--memo`, wraps the transfer + `remark_with_event` in `batch_all`. Refuses to double-queue an identical call. |
 | `pending` | — (read-only) | List the multisig's queued operations, **decoding each call from Bulletin** so a reviewer sees what they're approving. |
 | `execute` | signatory B | **Discover** pending ops on-chain (iterate `Multisig.Multisigs` by multisig account) → fetch each call's bytes from Bulletin by hash → assert `blake2_256(fetched) == on-chain call hash` → decode → `as_multi` to execute (`--call-hash` to pick one). |
 
@@ -80,9 +80,20 @@ cargo run -- execute --call-hash 0x<one>              # B approves one…
 cargo run -- execute                                  # …or processes all remaining
 ```
 
-Each transaction must be distinct (different `--recipient`/`--amount`) — an identical
-call produces the same hash, and the pallet rejects a second first-approval with
-`Multisig::NoTimepoint`. `init` guards against that and tells you.
+Each transaction must be distinct — an identical call produces the same hash, and the
+pallet rejects a second first-approval with `Multisig::NoTimepoint`. `init` guards
+against that and tells you.
+
+**Identical payments (same payee + amount, different invoices):** add `--memo <ref>`.
+It wraps the transfer + a `system.remark_with_event(<ref>)` in a `utility.batch_all`,
+so the call hash differs per invoice while the transfer is identical — and the memo is
+an on-chain audit reference that `pending` shows decoded:
+
+```bash
+cargo run -- init --memo invoice-001    # 0.1 PAS → B, audit ref invoice-001
+cargo run -- init --memo invoice-002    # SAME payment, distinct hash
+cargo run -- pending                     # shows  invoice : "invoice-001" / "invoice-002"
+```
 
 ## Endpoints
 

@@ -88,6 +88,10 @@ enum Cmd {
         /// Transfer amount in plancks (1 PAS = 1e10).
         #[arg(long, default_value_t = 1_000_000_000)]
         amount: u128,
+        /// Optional invoice/memo ref. Wraps the transfer + a `remark_with_event` in
+        /// a `batch_all` so identical payments get a distinct hash + audit reference.
+        #[arg(long)]
+        memo: Option<String>,
     },
     /// Read-only: list the multisig's pending operations with their decoded calls.
     Pending {
@@ -121,9 +125,9 @@ async fn main() -> Result<()> {
             let (a, b) = signers.resolve()?;
             commands::address(&a, &b)
         }
-        Cmd::Init { signers, recipient, amount } => {
+        Cmd::Init { signers, recipient, amount, memo } => {
             let (a, b) = signers.resolve()?;
-            commands::init(&a, &b, recipient, amount).await
+            commands::init(&a, &b, recipient, amount, memo).await
         }
         Cmd::Pending { signers } => {
             let (a, b) = signers.resolve()?;

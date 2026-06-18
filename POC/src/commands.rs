@@ -79,7 +79,16 @@ pub async fn fund_multisig(a_seed: &str, b_seed: &str, pas_each: u128) -> Result
 }
 
 /// Signatory A: store the call on Bulletin, then `approve_as_multi` on Asset Hub.
-pub async fn init(a_seed: &str, b_seed: &str, recipient: Option<String>, amount: u128) -> Result<()> {
+/// With `memo`, the call becomes `batch_all([transfer, remark_with_event(memo)])` so
+/// two otherwise-identical payments (same payee + amount, different invoice) get
+/// DISTINCT call hashes — and the memo is an on-chain audit reference.
+pub async fn init(
+    a_seed: &str,
+    b_seed: &str,
+    recipient: Option<String>,
+    amount: u128,
+    memo: Option<String>,
+) -> Result<()> {
     let a = keypair(a_seed)?;
     let b = keypair(b_seed)?;
     let a_acct = account_of(&a);
@@ -95,13 +104,35 @@ pub async fn init(a_seed: &str, b_seed: &str, recipient: Option<String>, amount:
     // we hash, store, and later decode. `call_data` gives us those bytes.
     let ah_cli = chains::asset_hub_client().await?;
     let ah_at = ah_cli.at_current_block().await?;
-    let transfer = asset_hub::tx()
-        .balances()
-        .transfer_keep_alive(MultiAddress::Id(dest.clone()), amount);
-    let call_bytes = ah_at
-        .transactions()
-        .call_data(&transfer)
-        .context("encoding call data")?;
+    let call_bytes = if let Some(m) = &memo {
+        // batch_all([transfer, remark]) — distinct hash per invoice, atomic execution.
+        let transfer_rc = RuntimeCall::Balances(
+            asset_hub::runtime_types::pallet_balances::pallet::Call::transfer_keep_alive {
+                dest: MultiAddress::Id(dest.clone()),
+                value: amount,
+            },
+        );
+        let remark_rc = RuntimeCall::System(
+            asset_hub::runtime_types::frame_system::pallet::Call::remark_with_event {
+                remark: m.clone().into_bytes(),
+            },
+        );
+        let batch = asset_hub::tx()
+            .utility()
+            .batch_all(vec![transfer_rc, remark_rc]);
+        ah_at
+            .transactions()
+            .call_data(&batch)
+            .context("encoding batch call data")?
+    } else {
+        let transfer = asset_hub::tx()
+            .balances()
+            .transfer_keep_alive(MultiAddress::Id(dest.clone()), amount);
+        ah_at
+            .transactions()
+            .call_data(&transfer)
+            .context("encoding call data")?
+    };
     let call_hash = blake2_256(&call_bytes);
     let cid = cid_from_digest(&call_hash)?;
 
@@ -212,7 +243,12 @@ pub async fn pending(a_seed: &str, b_seed: &str) -> Result<()> {
         match fetch_from_gateway(IPFS_GATEWAY, &cid).await {
             Ok(bytes) if blake2_256(&bytes) == call_hash => {
                 match decode_runtime_call(&bytes, ah_at.metadata_ref()) {
-                    Ok(call) => println!("    call      : {call:?}"),
+                    Ok(call) => {
+                        if let Some(memo) = extract_remark(&call) {
+                            println!("    invoice   : \"{memo}\"");
+                        }
+                        println!("    call      : {call:?}");
+                    }
                     Err(e) => println!("    call      : <decode failed: {e}>"),
                 }
             }
@@ -307,8 +343,9 @@ pub async fn execute(a_seed: &str, b_seed: &str, call_hash_filter: Option<&str>)
             other_signatories(&signatories, &b_acct),
             Some(timepoint),
             call,
-            // Generous max_weight (refunded down to actual by the pallet).
-            Weight { ref_time: 1_000_000_000, proof_size: 50_000 },
+            // Generous max_weight (refunded down to actual) — covers a batch with a
+            // remark, not just a bare transfer.
+            Weight { ref_time: 5_000_000_000, proof_size: 500_000 },
         );
         println!("  submitting as_multi on Paseo Asset Hub to execute…");
         let events = ah_cli
@@ -338,6 +375,21 @@ pub async fn execute(a_seed: &str, b_seed: &str, call_hash_filter: Option<&str>)
          (nothing passed from A to B)."
     );
     Ok(())
+}
+
+/// If the call is a `batch_all` containing a `remark_with_event`, return the remark
+/// text (the invoice reference) so it can be shown to a reviewer.
+fn extract_remark(call: &RuntimeCall) -> Option<String> {
+    use asset_hub::runtime_types::frame_system::pallet::Call as SystemCall;
+    use asset_hub::runtime_types::pallet_utility::pallet::Call as UtilityCall;
+    if let RuntimeCall::Utility(UtilityCall::batch_all { calls }) = call {
+        for inner in calls {
+            if let RuntimeCall::System(SystemCall::remark_with_event { remark }) = inner {
+                return Some(String::from_utf8_lossy(remark).into_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Decode SCALE call bytes into the generated `RuntimeCall` using the chain's
