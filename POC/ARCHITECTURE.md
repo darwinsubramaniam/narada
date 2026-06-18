@@ -179,12 +179,12 @@ sequenceDiagram
     actor P1 as Person 1
     participant BC as Bulletin Chain
     participant AH as Asset Hub
-    P1->>P1: build RuntimeCall; SCALE-encode → call_bytes
+    P1->>P1: build RuntimeCall, SCALE-encode to call_bytes
     P1->>P1: call_hash = blake2_256(call_bytes)
     P1->>BC: transactionStorage.store(call_bytes)
-    Note over BC: stored, content-addressed<br/>address == call_hash
+    Note over BC: stored, content-addressed<br/>address equals call_hash
     P1->>AH: approve_as_multi(threshold, others, None, call_hash)
-    Note over AH: Multisigs[(ms_acct, call_hash)]<br/>= {timepoint, approvals:[P1]}
+    Note over AH: pending entry under key<br/>ms_acct + call_hash
 ```
 
 After this, the full call is **publicly retrievable** (Bulletin) and the pending operation
@@ -205,18 +205,18 @@ sequenceDiagram
     actor P2 as Person 2
     participant AH as Asset Hub
     participant BC as Bulletin Chain
-    P2->>P2: derive multisig_acct from (signatories, threshold)
-    P2->>AH: iterate Multisigs where key0 == multisig_acct
-    AH-->>P2: N pending entries [(call_hash, timepoint, approvals)]
-    Note over P2: N = how many await my approval
+    P2->>P2: derive multisig_acct from signatories and threshold
+    P2->>AH: iterate Multisigs where key0 is multisig_acct
+    AH-->>P2: N pending entries, each call_hash and timepoint
+    Note over P2: N is how many await my approval
     loop for each pending op
-        P2->>P2: CID = CIDv1(raw, blake2b-256, call_hash)
-        P2->>BC: GET /ipfs/CID  (or P2P / own node)
+        P2->>P2: CID = CIDv1 from raw, blake2b-256, call_hash
+        P2->>BC: GET /ipfs/CID (or P2P / own node)
         BC-->>P2: call_bytes
-        P2->>P2: assert blake2_256(call_bytes) == call_hash
-        P2->>P2: SCALE-decode → full RuntimeCall (review intent)
+        P2->>P2: assert blake2_256(call_bytes) equals call_hash
+        P2->>P2: SCALE-decode to full RuntimeCall, review intent
         P2->>AH: as_multi(decoded call, Some(timepoint))
-        Note over AH: approvals == threshold → dispatch the call
+        Note over AH: approvals reach threshold, dispatch the call
     end
 ```
 
@@ -262,8 +262,8 @@ invoice decoded in the pending list.
 ```mermaid
 flowchart TB
     subgraph same["Identical transfers, distinct calls"]
-        T1["transfer 0.1 → B<br/>+ remark: invoice-001"] -->|blake2_256| H1["0x141dcd22…"]
-        T2["transfer 0.1 → B<br/>+ remark: invoice-002"] -->|blake2_256| H2["0x8dbf43db…"]
+        T1["transfer 0.1 to B<br/>remark invoice-001"] -->|blake2_256| H1["0x141dcd22..."]
+        T2["transfer 0.1 to B<br/>remark invoice-002"] -->|blake2_256| H2["0x8dbf43db..."]
     end
     H1 --> Q[("Two distinct queue entries")]
     H2 --> Q
