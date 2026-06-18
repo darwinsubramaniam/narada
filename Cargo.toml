@@ -7,6 +7,9 @@ members = [
     "packages/mobile",
     "packages/api",
 ]
+# The Bulletin-multisig proof-of-concept is a standalone subxt project with its
+# own workspace; keep it out of the Dioxus app's dependency tree.
+exclude = ["POC"]
 
 [workspace.dependencies]
 dioxus = { version = "0.7.1" }
